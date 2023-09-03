@@ -28,13 +28,13 @@ def client():
     'package', 'stats', 'mirrors', 'basegroups', 'basegroups/foo',
 ])
 def test_main_endpoints(client, endpoint):
-    r = client.get('/' + endpoint)
+    r = client.get(f'/{endpoint}')
     assert r.status_code == 200
     assert "etag" in r.headers
     etag = r.headers["etag"]
-    r = client.get('/' + endpoint, headers={"if-none-match": etag})
+    r = client.get(f'/{endpoint}', headers={"if-none-match": etag})
     assert r.status_code == 304
-    r = client.get('/' + endpoint, headers={"if-none-match": "nope"})
+    r = client.get(f'/{endpoint}', headers={"if-none-match": "nope"})
     assert r.status_code == 200
 
 
@@ -185,7 +185,7 @@ pkgname = something
     assert list(devel.replaces) == ["libarchive-devel-git"]
     assert devel.pkgver == "3.5.1"
     something = [p for p in packages if p.pkgname == "something"][0]
-    assert list(something.depends) == []
+    assert not list(something.depends)
 
 
 def test_for_pkgbasedesc():

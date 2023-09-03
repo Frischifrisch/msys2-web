@@ -48,9 +48,8 @@ def parse_packager(text: str, _re: Any = re.compile("(.*?)<(.*?)>")) -> Packager
     match = _re.fullmatch(text)
     if match is None:
         return PackagerInfo(text.strip(), None)
-    else:
-        name, email = match.groups()
-        return PackagerInfo(name.strip(), email.strip())
+    name, email = match.groups()
+    return PackagerInfo(name.strip(), email.strip())
 
 
 class DepType(Enum):
@@ -61,10 +60,7 @@ class DepType(Enum):
 
 
 def get_repositories() -> List[Repository]:
-    l = []
-    for data in REPOSITORIES:
-        l.append(Repository(*data))
-    return l
+    return [Repository(*data) for data in REPOSITORIES]
 
 
 def get_realname_variants(s: Source) -> List[str]:
@@ -91,7 +87,7 @@ def cleanup_files(files: List[str]) -> List[str]:
         if last is not None:
             if path.endswith("/") and last.startswith(path):
                 continue
-        result.append("/" + path)
+        result.append(f"/{path}")
         last = path
     return result[::-1]
 
@@ -129,9 +125,11 @@ class Repository:
 
         repo_packages = []
         for s in state.sources.values():
-            for k, p in sorted(s.packages.items()):
-                if p.repo == self.name and p.repo_variant == self.variant:
-                    repo_packages.append(p)
+            repo_packages.extend(
+                p
+                for k, p in sorted(s.packages.items())
+                if p.repo == self.name and p.repo_variant == self.variant
+            )
         return repo_packages
 
     @property
@@ -258,7 +256,7 @@ class Package:
         self.pgpsig = pgpsig
         self.sha256sum = sha256sum
         self.arch = arch
-        self.fileurl = base_url + "/" + quote(self.filename)
+        self.fileurl = f"{base_url}/{quote(self.filename)}"
         self.repo = repo
         self.repo_variant = repo_variant
         self.package_prefix = package_prefix
@@ -281,7 +279,7 @@ class Package:
         return self._files.splitlines()
 
     def __repr__(self) -> str:
-        return "Package(%s)" % self.fileurl
+        return f"Package({self.fileurl})"
 
     @property
     def pkgmeta(self) -> PkgMetaEntry:
@@ -294,9 +292,7 @@ class Package:
         """Returns a list of (name, url) tuples for the various URLs of the package"""
 
         meta = self.pkgmeta
-        urls = []
-        # homepage from the PKGBUILD, everything else from PKGMETA
-        urls.append(("Homepage", self.url))
+        urls = [("Homepage", self.url)]
         if meta.changelog_url is not None:
             urls.append(("Changelog", meta.changelog_url))
         if meta.repository_url is not None:
@@ -334,10 +330,14 @@ class Package:
     def repo_url(self) -> str:
         if self.name in state.sourceinfos:
             return state.sourceinfos[self.name].repo_url
-        for repo in get_repositories():
-            if repo.name == self.repo:
-                return repo.src_url
-        return ""
+        return next(
+            (
+                repo.src_url
+                for repo in get_repositories()
+                if repo.name == self.repo
+            ),
+            "",
+        )
 
     @property
     def repo_path(self) -> str:
@@ -347,11 +347,11 @@ class Package:
 
     @property
     def history_url(self) -> str:
-        return self.repo_url + ("/commits/master/" + quote(self.repo_path))
+        return f"{self.repo_url}/commits/master/{quote(self.repo_path)}"
 
     @property
     def source_url(self) -> str:
-        return self.repo_url + ("/tree/master/" + quote(self.repo_path))
+        return f"{self.repo_url}/tree/master/{quote(self.repo_path)}"
 
     @property
     def key(self) -> PackageKey:
@@ -400,7 +400,7 @@ class Source:
 
     @property
     def repos(self) -> List[str]:
-        return sorted(set([p.repo for p in self.packages.values()]))
+        return sorted({p.repo for p in self.packages.values()})
 
     @property
     def url(self) -> str:
@@ -408,7 +408,7 @@ class Source:
 
     @property
     def arches(self) -> List[str]:
-        return sorted(set([p.arch for p in self.packages.values()]))
+        return sorted({p.arch for p in self.packages.values()})
 
     @property
     def groups(self) -> List[str]:
@@ -427,13 +427,13 @@ class Source:
     @property
     def version(self) -> str:
         # get the newest version
-        versions: Set[str] = set([p.version for p in self.packages.values()])
+        versions: Set[str] = {p.version for p in self.packages.values()}
         return sorted(versions, key=cmp_to_key(vercmp), reverse=True)[0]
 
     @property
     def git_version(self) -> str:
         # get the newest version
-        versions: Set[str] = set([p.git_version for p in self.packages.values()])
+        versions: Set[str] = {p.git_version for p in self.packages.values()}
         return sorted(versions, key=cmp_to_key(vercmp), reverse=True)[0]
 
     @property
@@ -453,9 +453,8 @@ class Source:
             if ext_id.fallback:
                 if fallback is None or version_is_newer_than(info.version, fallback.version):
                     fallback = info
-            else:
-                if newest is None or version_is_newer_than(info.version, newest.version):
-                    newest = info
+            elif newest is None or version_is_newer_than(info.version, newest.version):
+                newest = info
         return newest or fallback or None
 
     @property
@@ -534,26 +533,23 @@ class Source:
 
     @property
     def filebug_url(self) -> str:
-        return self.repo_url + (
-            "/issues/new?template=bug_report.yml&title=" + quote_plus("[%s] " % self.realname))
+        return f'{self.repo_url}/issues/new?template=bug_report.yml&title={quote_plus(f"[{self.realname}] ")}'
 
     @property
     def searchbug_url(self) -> str:
-        return self.repo_url + (
-            "/issues?q=" + quote_plus("is:issue is:open %s" % self.realname))
+        return f'{self.repo_url}/issues?q={quote_plus(f"is:issue is:open {self.realname}")}'
 
     @classmethod
     def from_desc(cls, d: Dict[str, List[str]], repo: Repository) -> "Source":
 
         name = d["%NAME%"][0]
-        if "%BASE%" not in d:
-            if name.startswith(repo.package_prefix):
-                base = name[len(repo.package_prefix):]
-            else:
-                base = name
-        else:
+        if "%BASE%" in d:
             base = d["%BASE%"][0]
 
+        elif name.startswith(repo.package_prefix):
+            base = name[len(repo.package_prefix):]
+        else:
+            base = name
         return cls(base)
 
     def add_desc(self, d: Dict[str, List[str]], repo: Repository) -> None:
@@ -601,22 +597,21 @@ class SrcInfoPackage(object):
 
     @property
     def history_url(self) -> str:
-        return self.repo_url + ("/commits/master/" + quote(self.repo_path))
+        return f"{self.repo_url}/commits/master/{quote(self.repo_path)}"
 
     @property
     def source_url(self) -> str:
-        return self.repo_url + ("/tree/master/" + quote(self.repo_path))
+        return f"{self.repo_url}/tree/master/{quote(self.repo_path)}"
 
     @property
     def build_version(self) -> str:
-        version = "%s-%s" % (self.pkgver, self.pkgrel)
+        version = f"{self.pkgver}-{self.pkgrel}"
         if self.epoch:
-            version = "%s~%s" % (self.epoch, version)
+            version = f"{self.epoch}~{version}"
         return version
 
     def __repr__(self) -> str:
-        return "<%s %s %s>" % (
-            type(self).__name__, self.pkgname, self.build_version)
+        return f"<{type(self).__name__} {self.pkgname} {self.build_version}>"
 
     @classmethod
     def for_srcinfo(cls, srcinfo: str, repo: str, repo_url: str, repo_path: str, date: str) -> "Set[SrcInfoPackage]":
@@ -655,7 +650,7 @@ class SrcInfoPackage(object):
         pkgbasedesc = base["pkgdesc"][0] if base.get("pkgdesc") else None
 
         packages = set()
-        for name, pkg in sub.items():
+        for pkg in sub.values():
             pkgbase = pkg["pkgbase"][0]
             pkgname = pkg["pkgname"][0]
             pkgver = pkg.get("pkgver", [""])[0]

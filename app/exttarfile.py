@@ -7,7 +7,7 @@ class ExtTarFile(tarfile.TarFile):
     """Extends TarFile to support zstandard"""
 
     @classmethod
-    def zstdopen(cls, name, mode="r", fileobj=None, cctx=None, dctx=None, **kwargs):  # type: ignore
+    def zstdopen(cls, name, mode="r", fileobj=None, cctx=None, dctx=None, **kwargs):    # type: ignore
         """Open zstd compressed tar archive name for reading or writing.
            Appending is not allowed.
         """
@@ -15,7 +15,7 @@ class ExtTarFile(tarfile.TarFile):
             raise ValueError("mode must be 'r'")
 
         try:
-            zobj = zstandard.open(fileobj or name, mode + "b", cctx=cctx, dctx=dctx)
+            zobj = zstandard.open(fileobj or name, f"{mode}b", cctx=cctx, dctx=dctx)
             with zobj:
                 data = zobj.read()
         except (zstandard.ZstdError, EOFError) as e:

@@ -29,17 +29,9 @@ def vercmp(v1: str, v2: str) -> int:
         return res
 
     def split(v: str) -> Tuple[str, str, Optional[str]]:
-        if "~" in v:
-            e, v = v.split("~", 1)
-        else:
-            e, v = ("0", v)
-
+        e, v = v.split("~", 1) if "~" in v else ("0", v)
         r: Optional[str] = None
-        if "-" in v:
-            v, r = v.rsplit("-", 1)
-        else:
-            v, r = (v, None)
-
+        v, r = v.rsplit("-", 1) if "-" in v else (v, None)
         return (e, v, r)
 
     digit, alpha, other = range(3)
@@ -75,15 +67,10 @@ def vercmp(v1: str, v2: str) -> int:
         for p1, p2 in zip_longest(parse(v1), parse(v2), fillvalue=None):
             if p1 is None:
                 assert p2 is not None
-                if get_type(p2) == alpha:
-                    return 1
-                return -1
+                return 1 if get_type(p2) == alpha else -1
             elif p2 is None:
                 assert p1 is not None
-                if get_type(p1) == alpha:
-                    return -1
-                return 1
-
+                return -1 if get_type(p1) == alpha else 1
             t1 = get_type(p1)
             t2 = get_type(p2)
             if t1 != t2:

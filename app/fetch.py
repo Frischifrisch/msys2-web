@@ -96,7 +96,7 @@ def parse_cygwin_versions(base_url: str, data: bytes) -> Tuple[Dict[str, ExtInfo
             source = line.split(":", 1)[-1].strip()
             fn = source.rsplit(None, 2)[0]
             source_package = fn.rsplit("/")[-1].rsplit("-", 3)[0]
-            src_url = base_url + "/" + fn
+            src_url = f"{base_url}/{fn}"
             assert version is not None
             src_url_name = src_url.rsplit("/")[-1]
             if source_package.startswith("mingw64-x86_64-"):
@@ -106,9 +106,12 @@ def parse_cygwin_versions(base_url: str, data: bytes) -> Tuple[Dict[str, ExtInfo
                     if not version_is_newer_than(version, existing_version):
                         continue
                 versions_mingw64[info_name] = ExtInfo(
-                    info_name, version, 0,
-                    "https://cygwin.com/packages/summary/%s-src.html" % source_package,
-                    {src_url: src_url_name})
+                    info_name,
+                    version,
+                    0,
+                    f"https://cygwin.com/packages/summary/{source_package}-src.html",
+                    {src_url: src_url_name},
+                )
             else:
                 info_name = source_package
                 if info_name in versions:
@@ -116,9 +119,12 @@ def parse_cygwin_versions(base_url: str, data: bytes) -> Tuple[Dict[str, ExtInfo
                     if not version_is_newer_than(version, existing_version):
                         continue
                 versions[info_name] = ExtInfo(
-                    info_name, version, 0,
-                    "https://cygwin.com/packages/summary/%s-src.html" % source_package,
-                    {src_url: src_url_name})
+                    info_name,
+                    version,
+                    0,
+                    f"https://cygwin.com/packages/summary/{source_package}-src.html",
+                    {src_url: src_url_name},
+                )
     return versions, versions_mingw64
 
 
@@ -239,8 +245,7 @@ async def update_arch_versions() -> None:
         for source in sources.values():
             version = extract_upstream_version(arch_version_to_msys(source.version))
             for p in source.packages.values():
-                url = "https://archlinux.org/packages/%s/%s/%s/" % (
-                    p.repo, p.arch, p.name)
+                url = f"https://archlinux.org/packages/{p.repo}/{p.arch}/{p.name}/"
 
                 if p.name in arch_versions:
                     old_ver = arch_versions[p.name][0]
@@ -249,8 +254,7 @@ async def update_arch_versions() -> None:
                 else:
                     arch_versions[p.name] = ExtInfo(p.name, version, p.builddate, url, {})
 
-            url = "https://archlinux.org/packages/%s/%s/%s/" % (
-                source.repos[0], source.arches[0], source.name)
+            url = f"https://archlinux.org/packages/{source.repos[0]}/{source.arches[0]}/{source.name}/"
             if source.name in arch_versions:
                 old_ver = arch_versions[source.name][0]
                 if version_is_newer_than(version, old_ver):
@@ -260,8 +264,7 @@ async def update_arch_versions() -> None:
 
             # use provides as fallback
             for p in source.packages.values():
-                url = "https://archlinux.org/packages/%s/%s/%s/" % (
-                    p.repo, p.arch, p.name)
+                url = f"https://archlinux.org/packages/{p.repo}/{p.arch}/{p.name}/"
 
                 for provides in sorted(p.provides.keys()):
                     if provides not in arch_versions:
@@ -282,7 +285,7 @@ async def update_arch_versions() -> None:
         version = item["Version"]
         msys_ver = extract_upstream_version(arch_version_to_msys(version))
         last_modified = item["LastModified"]
-        url = "https://aur.archlinux.org/packages/%s" % name
+        url = f"https://aur.archlinux.org/packages/{name}"
         aur_versions[name] = ExtInfo(name, msys_ver, last_modified, url, {})
 
     for item in items:
@@ -293,7 +296,7 @@ async def update_arch_versions() -> None:
             version = item["Version"]
             msys_ver = extract_upstream_version(arch_version_to_msys(version))
             last_modified = item["LastModified"]
-            url = "https://aur.archlinux.org/packages/%s" % name
+            url = f"https://aur.archlinux.org/packages/{name}"
             aur_versions[provides] = ExtInfo(provides, msys_ver, last_modified, url, {})
 
     logger.info("done")
@@ -356,9 +359,7 @@ async def update_source() -> None:
     logger.info("update source")
 
     final: Dict[str, Source] = {}
-    awaitables = []
-    for repo in get_repositories():
-        awaitables.append(parse_repo(repo))
+    awaitables = [parse_repo(repo) for repo in get_repositories()]
     for sources in await asyncio.gather(*awaitables):
         for name, source in sources.items():
             if name in final:
@@ -420,7 +421,7 @@ async def update_pypi_versions(pkgmeta: PkgMeta) -> None:
         logger.info("Loading %r" % url)
         data = await get_content_cached(url, timeout=REQUEST_TIMEOUT)
         json_obj = json.loads(gzip.decompress(data).decode("utf-8"))
-        projects.update(json_obj.get("projects", {}))
+        projects |= json_obj.get("projects", {})
 
     pypi_versions = {}
     for entry in pkgmeta.packages.values():
@@ -450,20 +451,18 @@ def fill_rdepends(sources: Dict[str, Source]) -> None:
     for s in sources.values():
         for p in s.packages.values():
             for n, r in p.depends.items():
-                deps.setdefault(n, dict()).setdefault(p, set()).add(DepType.NORMAL)
+                deps.setdefault(n, {}).setdefault(p, set()).add(DepType.NORMAL)
             for n, r in p.makedepends.items():
-                deps.setdefault(n, dict()).setdefault(p, set()).add(DepType.MAKE)
+                deps.setdefault(n, {}).setdefault(p, set()).add(DepType.MAKE)
             for n, r in p.optdepends.items():
-                deps.setdefault(n, dict()).setdefault(p, set()).add(DepType.OPTIONAL)
+                deps.setdefault(n, {}).setdefault(p, set()).add(DepType.OPTIONAL)
             for n, r in p.checkdepends.items():
-                deps.setdefault(n, dict()).setdefault(p, set()).add(DepType.CHECK)
+                deps.setdefault(n, {}).setdefault(p, set()).add(DepType.CHECK)
 
     for s in sources.values():
         for p in s.packages.values():
-            rdeps = [deps.get(p.name, dict())]
-            for prov in p.provides:
-                rdeps.append(deps.get(prov, dict()))
-
+            rdeps = [deps.get(p.name, {})]
+            rdeps.extend(deps.get(prov, {}) for prov in p.provides)
             merged: Dict[Package, Set[DepType]] = {}
             for rd in rdeps:
                 for rp, rs in rd.items():

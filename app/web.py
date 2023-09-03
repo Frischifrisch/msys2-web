@@ -74,7 +74,7 @@ def context_function(name: str) -> Callable:
 @context_function("is_endpoint")
 def is_endpoint(request: Request, endpoint: str) -> bool:
     path: str = request.scope["path"]
-    return path == "/" + endpoint or path.startswith("/" + endpoint + "/")
+    return path == f"/{endpoint}" or path.startswith(f"/{endpoint}/")
 
 
 @context_function("update_timestamp")
@@ -87,14 +87,14 @@ def package_url(request: Request, package: Package, name: Optional[str] = None) 
     res: str = ""
     if name is None:
         res = str(request.url_for("package", package_name=name or package.name))
-        res += "?repo=" + package.repo
+        res += f"?repo={package.repo}"
         if package.repo_variant:
-            res += "&variant=" + package.repo_variant
+            res += f"&variant={package.repo_variant}"
     else:
         res = str(request.url_for("package", package_name=re.split("[<>=]+", name)[0]))
         if package.repo_variant:
-            res += "?repo=" + package.repo
-            res += "&variant=" + package.repo_variant
+            res += f"?repo={package.repo}"
+            res += f"&variant={package.repo_variant}"
     return res
 
 
@@ -173,19 +173,19 @@ def rdepends_sort(rdepends: Dict[Package, Set[str]]) -> List[Tuple[Package, Set[
 @template_filter('timestamp')
 def filter_timestamp(d: int) -> str:
     try:
-        return datetime.datetime.fromtimestamp(
-            int(d)).strftime('%Y-%m-%d %H:%M:%S')
+        return datetime.datetime.fromtimestamp(d).strftime('%Y-%m-%d %H:%M:%S')
     except OSError:
         return "-"
 
 
 @template_filter('filesize')
 def filter_filesize(d: int) -> str:
-    d = int(d)
-    if d > 1024 ** 3:
-        return "%.2f GB" % (d / (1024 ** 3))
-    else:
-        return "%.2f MB" % (d / (1024 ** 2))
+    d = d
+    return (
+        "%.2f GB" % (d / (1024**3))
+        if d > 1024**3
+        else "%.2f MB" % (d / (1024**2))
+    )
 
 
 @router.get('/robots.txt')
@@ -222,20 +222,16 @@ async def index(request: Request, response: Response) -> Response:
 async def base(request: Request, response: Response, base_name: Optional[str] = None) -> Response:
     global state
 
-    if base_name is not None:
-        if base_name in state.sources:
-            res = [state.sources[base_name]]
-        else:
-            res = []
-        return templates.TemplateResponse("base.html", {
-            "request": request,
-            "sources": res,
-        }, headers=dict(response.headers))
-    else:
+    if base_name is None:
         return templates.TemplateResponse("baseindex.html", {
             "request": request,
             "sources": state.sources.values(),
         }, headers=dict(response.headers))
+    res = [state.sources[base_name]] if base_name in state.sources else []
+    return templates.TemplateResponse("base.html", {
+        "request": request,
+        "sources": res,
+    }, headers=dict(response.headers))
 
 
 @router.get('/group/', dependencies=[Depends(Etag(get_etag))])
@@ -255,10 +251,7 @@ async def groups(request: Request, response: Response, group_name: Optional[str]
     if group_name is not None:
         res = []
         for s in state.sources.values():
-            for k, p in sorted(s.packages.items()):
-                if group_name in p.groups:
-                    res.append(p)
-
+            res.extend(p for k, p in sorted(s.packages.items()) if group_name in p.groups)
         return templates.TemplateResponse("group.html", {
             "request": request,
             "name": group_name,
@@ -339,14 +332,13 @@ async def package(request: Request, response: Response, package_name: str, repo:
     provides = []
     for s in state.sources.values():
         for k, p in sorted(s.packages.items()):
-            is_package_exact = (package_name is None or p.name == package_name)
-            if is_package_exact or package_name in p.provides:
-                if not repo or p.repo == repo:
-                    if not variant or p.repo_variant == variant:
-                        if is_package_exact:
-                            packages.append((s, p))
-                        else:
-                            provides.append((s, p))
+            if not repo or p.repo == repo:
+                if not variant or p.repo_variant == variant:
+                    is_package_exact = (package_name is None or p.name == package_name)
+                    if is_package_exact:
+                        packages.append((s, p))
+                    elif package_name in p.provides:
+                        provides.append((s, p))
 
     if packages:
         return templates.TemplateResponse("package.html", {
@@ -369,10 +361,11 @@ async def updates(request: Request, response: Response, repo: str = "") -> Respo
 
     packages: List[Package] = []
     for s in state.sources.values():
-        for p in s.packages.values():
-            if repo_filter is not None and p.repo != repo_filter:
-                continue
-            packages.append(p)
+        packages.extend(
+            p
+            for p in s.packages.values()
+            if repo_filter is None or p.repo == repo_filter
+        )
     packages.sort(key=lambda p: p.builddate, reverse=True)
 
     return templates.TemplateResponse("updates.html", {
@@ -447,12 +440,11 @@ async def outofdate(request: Request, response: Response, related: Optional[str]
             git_version = ""
 
         info = s.upstream_info
-        if info is not None and info.version != "":
-            if version_is_newer_than(info.version, msys_version):
-                to_update.append((s, msys_version, git_version, info.version, info.url, info.date))
-        else:
+        if info is None or info.version == "":
             missing.append(s)
 
+        elif version_is_newer_than(info.version, msys_version):
+            to_update.append((s, msys_version, git_version, info.version, info.url, info.date))
     # show packages which have recently been build first.
     # assumes high frequency update packages are more important
     to_update.sort(key=lambda i: (i[-1], i[0].name), reverse=True)
@@ -496,7 +488,6 @@ def get_status_text(key: str) -> str:
 
 
 def get_status_category(key: str) -> str:
-    SUCCESS = "success"
     DANGER = "danger"
 
     try:
@@ -506,7 +497,7 @@ def get_status_category(key: str) -> str:
 
     if status in (PackageStatus.FINISHED, PackageStatus.FINISHED_BUT_BLOCKED,
                   PackageStatus.FINISHED_BUT_INCOMPLETE):
-        return SUCCESS
+        return "success"
     elif status in (PackageStatus.WAITING_FOR_BUILD, PackageStatus.WAITING_FOR_DEPENDENCIES,
                     PackageStatus.UNKNOWN):
         return ""
@@ -540,27 +531,27 @@ def get_status_priority(key: str) -> Tuple[int, str]:
 
 
 def repo_to_builds(repo: str) -> List[str]:
-    if repo == "msys":
-        return [repo, "msys-src"]
-    else:
-        return [repo, "mingw-src"]
+    return [repo, "msys-src"] if repo == "msys" else [repo, "mingw-src"]
 
 
 def get_build_status(srcinfo: SrcInfoPackage, build_types: Set[str] = set()) -> List[PackageBuildStatus]:
     build_status = state.build_status
 
-    entry = None
-    for package in build_status.packages:
-        if package.name == srcinfo.pkgbase and package.version == srcinfo.build_version:
-            entry = package
-            break
-
+    entry = next(
+        (
+            package
+            for package in build_status.packages
+            if package.name == srcinfo.pkgbase
+            and package.version == srcinfo.build_version
+        ),
+        None,
+    )
     results = []
     if entry is not None:
         for build_type, status in sorted(entry.builds.items(), key=lambda i: get_status_priority(i[1].status), reverse=True):
-            status_key = status.status
             if build_types and build_type not in build_types:
                 continue
+            status_key = status.status
             results.append(
                 PackageBuildStatus(
                     build_type, get_status_text(status_key),
@@ -569,11 +560,13 @@ def get_build_status(srcinfo: SrcInfoPackage, build_types: Set[str] = set()) -> 
             )
 
     if not results:
-        for build in sorted(build_types):
-            key = "unknown"
-            results.append(
-                PackageBuildStatus(build, get_status_text(key), "", {}, get_status_category(key)))
-
+        key = "unknown"
+        results.extend(
+            PackageBuildStatus(
+                build, get_status_text(key), "", {}, get_status_category(key)
+            )
+            for build in sorted(build_types)
+        )
     return results
 
 
@@ -595,7 +588,11 @@ async def queue(request: Request, response: Response, build_type: str = "") -> R
                     continue
                 if version_is_newer_than(srcinfo.build_version, p.version):
                     srcinfo_repos.setdefault(srcinfo.pkgbase, set()).update(repo_to_builds(srcinfo.repo))
-                    repo_list = srcinfo_repos[srcinfo.pkgbase] if not build_filter else set([build_filter])
+                    repo_list = (
+                        srcinfo_repos[srcinfo.pkgbase]
+                        if not build_filter
+                        else {build_filter}
+                    )
                     new_src = state.sources.get(srcinfo.pkgbase)
                     grouped[srcinfo.pkgbase] = (srcinfo, new_src, p, get_build_status(srcinfo, repo_list))
 
@@ -613,7 +610,11 @@ async def queue(request: Request, response: Response, build_type: str = "") -> R
     for srcinfos in available.values():
         for srcinfo in srcinfos:
             srcinfo_repos.setdefault(srcinfo.pkgbase, set()).update(repo_to_builds(srcinfo.repo))
-            repo_list = srcinfo_repos[srcinfo.pkgbase] if not build_filter else set([build_filter])
+            repo_list = (
+                srcinfo_repos[srcinfo.pkgbase]
+                if not build_filter
+                else {build_filter}
+            )
             src, pkg = None, None
             if srcinfo.pkgbase in grouped:
                 src, pkg = grouped[srcinfo.pkgbase][1:3]
